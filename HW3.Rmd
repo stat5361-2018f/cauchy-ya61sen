@@ -1,0 +1,335 @@
+---
+title: "Homework 3 - STAT 5362 Statistical Computing"
+author:
+  - Sen Yang^[<sen.2.yang@uconn.edu>; M.S. student at
+    Department of Statistics, University of Connecticut.]
+date: "`r format(Sys.time(), '%d %B %Y')`"
+documentclass: article
+papersize: letter
+fontsize: 11pt
+bibliography: template.bib
+biblio-style: asa
+output:
+  bookdown::pdf_document2
+abstract: |
+    This homework starts with a mathmetical proof of loglikelihood function and corresponding Fisher information of Cauchy distribution with a unknown scale parameter $\theta$. Based on a random sample, I use Newton–Raphson method, Fixed-Point method and Fisher Scoring to estimate the value of $\theta$. Finally, different methods are compared to each other, among which a combination of Fisher scoring and Newton-Raphson method has the most efficient way to do the estimation.
+---
+
+
+```{r setup, echo = FALSE, message = FALSE, warning = FALSE}
+## some utility functions, see the source code for details
+source("utils_template.R")
+
+## specify the packages needed
+pkgs <- c("DT", "leaflet", "splines2", "webshot")
+need.packages(pkgs)
+
+## external data can be read in by regular functions,
+## such as read.table or load
+
+## for latex and html output
+isHtml <- knitr::is_html_output()
+isLatex <- knitr::is_latex_output()
+latex <- ifelse(isLatex, '\\LaTeX\\', 'LaTeX')
+
+## specify global chunk options
+knitr::opts_chunk$set(fig.width = 5, fig.height = 4, dpi = 300,
+                      out.width = "90%", fig.align = "center")
+
+```
+
+
+# Proof in Mathematics {#sec:proof}
+
+The density function of a Cauchy distribution with a known scale parameter is 
+
+\begin{align*}
+    f(x;\theta) = \frac{1}{\pi[1+(x-\theta)^2]}, x \in R, \theta \in R.
+\end{align*}
+
+Let $X_1,..., X_n$ be a random sample of size $n$ and $\ell(\theta)$ the log-likelihood function of $\theta$ based on the sample. Then,
+\begin{align*}
+    L(\theta) &= \prod_{i=1}^{n} {\pi[1+(X_i - \theta)^2]}^{-1} \\
+    &= \pi^{-n} \prod_{i=1}^{n}[1+(X_i - \theta)^2]^{-1}.
+\end{align*}
+Take logarithm on both sides,
+\begin{align*}
+    \ell(\theta) &= -n \ln \pi - \sum_{i=1}^{n} \ln [1+(X_i - \theta)^2].
+\end{align*}
+Take first derivative of $\theta$ on both sides,
+\begin{align*}
+    \ell^\prime(\theta) &= -2 \sum_{i=1}^{n} \frac{\theta - X_i}{1+(X_i - \theta)^2}.
+\end{align*}
+Take second derivative of $\theta$ on both sides,
+\begin{align*}
+    \ell^{\prime\prime}(\theta) &= -2 \sum_{i=1}^{n} \frac{1 - (\theta - X_i)^2}{[1+(X_i - \theta)^2]^2}.
+\end{align*}
+Then, the Fisher information $I_n(\theta)$ of this sample is 
+\begin{align*}
+    I_n(\theta) &= -E_\theta[\ell^{\prime\prime}(\theta)|\theta] \\
+    &= \int_{-\infty}^{\infty} \ell^{\prime\prime}(\theta) f(x) dx \\
+    &= 2n \int_{-\infty}^{\infty} \frac{1 - (\theta - x)^2}{[1+(x - \theta)^2]^2} \cdot \frac{1}{\pi[1+(x-\theta)^2]} dx \\
+    &= \frac{2n}{\pi} \int_{-\infty}^{\infty} \frac{1 - (\theta - x)^2}{[1+(x - \theta)^2]^3} dx \\
+    &= \frac{2n}{\pi} \int_{-\infty}^{\infty} \frac{1 - x^2}{[1+x^2]^3} dx \\
+    &= \frac{4n}{\pi} \int_{0}^{\infty} \frac{1 - x^2}{[1+x^2]^3} dx. \\
+\end{align*}
+Substituting $u = \frac{1}{1+x^2}$, then $x^2=\frac{1}{u}-1$ and $x = (\frac{1}{u}-1)^{0.5}=(1-u)^{0.5}u^{-0.5}$. 
+
+Therefore, $dx = -0.5\cdot[(1-u)^{-0.5}u^{-0.5}+(1-u)^{0.5}u^{-1.5}]du$.
+\begin{align*}
+    I_n(\theta) &= \frac{4n}{\pi} [\int_{0}^{\infty} \frac{1}{[1+x^2]^3} dx - \int_{0}^{\infty} \frac{x^2}{[1+x^2]^3} dx] \\
+    &= -\frac{2n}{\pi} \int_{0}^{1} [u^{0.5}(1-u)^{1.5} - u^{2.5}(1-u)^{-0.5}]du \\
+    &= -\frac{2n}{\pi} [\int_{0}^{1} u^{0.5}(1-u)^{1.5} du - \int_{0}^{1}u^{2.5}(1-u)^{-0.5} du] \;\; (Beta\; integral) \\
+    &= -\frac{2n}{\pi} [\frac{\Gamma(1.5)\Gamma(2.5)}{\Gamma(4)}-\frac{\Gamma(3.5)\Gamma(0.5)}{\Gamma(4)}] \\
+    &= -\frac{2n}{\pi} [\frac{0.375\pi-1.875\pi}{3!}] \\
+    &= \frac{n}{2}
+\end{align*}
+
+# Random Sample and Plot of Loglikelihood against $\theta$ {#sec:plot_l}
+
+Set the random seed as 20180909 and generate a random sample of size $n = 10$ with $\theta = 5$.
+ 
+```{r rdm_sample, echo=T}
+set.seed(20180909)
+rdm_sample <- rcauchy(10, 5, 1)
+rdm_sample
+```
+
+The plot of loglikelihood function against $\theta$ is shown in Figure \@ref(fig:loglikelihood).
+
+
+```{r loglikelihood, echo=T ,warning=FALSE, message=FALSE}
+log_llh <- function(theta, sample_X){
+  lsum <- 0
+  for (i in 1:length(sample_X)){
+    lsum <- lsum + -log(pi) - log(1 + (theta - sample_X[i])^2)
+  }
+  lsum
+}
+
+x <- seq(0, 10, 0.01)
+y <- sapply(x, log_llh, sample_X = rdm_sample)
+data_l <- as.data.frame(cbind(y, x))
+library(ggplot2)
+ggplot(data_l, aes(x, y)) + geom_smooth() +
+  labs(title = expression(paste("Loglikelihood of sample against ", theta)),
+       x = expression(theta), y = "loglikelihood") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+# Newton–Raphson method {#sec:newton}
+
+```{r newton, echo = TRUE}
+#first derivative of loglikelihood
+first_derv <- function(theta, sample_X) {
+  first_derv <- 0
+  for (i in 1:length(sample_X)){
+    first_derv <- first_derv -2 *
+      ((theta - sample_X[i])/(1 + (theta - sample_X[i])^2))
+  }
+  first_derv
+}
+#second derivative of loglikelihood
+second_derv <- function(theta, sample_X) {
+  second_derv <- 0
+  for (i in 1:length(sample_X)){
+    second_derv <- second_derv -2 * 
+      ((1-(theta - sample_X[i])^2)/(1 + (theta - sample_X[i])^2)^2)
+  }
+  second_derv
+}
+#Newton–Raphson method
+newton <- function(init, pre=1e-50, maxrun=200) {
+  n <- 1
+  xt <- init
+  while (n<maxrun){
+    fx <- first_derv(xt, rdm_sample)
+    fx_d <- second_derv(xt, rdm_sample)
+    if (fx == 0) {break}
+    ht <- -fx/fx_d
+    xt1 <- xt + ht
+    if (abs(xt1-xt) < pre) {break}
+    xt <- xt1
+    n <- n+1
+  }
+return(c(root = xt, iter = n))
+}
+init <- seq(-10, 30, 0.5)
+result <- as.data.frame(matrix(0, nrow = length(init), ncol = 3))
+for (i in 1:length(init) ) {
+  result[i,1] <- paste("Initial = ", init[i])
+  result[i,2:3] <- newton(init[i])
+}
+colnames(result) <- (c("Initial", "Root", "# of iterations"))
+library(pander)
+pander(result)
+```
+
+```{r plot2, echo = TRUE}
+# plot
+result <- cbind(init, result)
+ggplot(result, aes(init, Root)) +
+  geom_line() + geom_point() + 
+  labs(title = expression(paste("Root vs. ", theta)),
+       x = expression(paste("Initial value of ", theta)), y = "Root") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+According to the data and figure, it can be concluded that when initial value is less then 4, the estimation is not accurate. When it is around or a little bit larger than 5, the estimation is very close to the true value. Meanwhile, at some initial points, the estimations are not stable.
+
+# Improved Newton–Raphson method {#sec:newton2}
+
+By halving the steps, an improved Newton-Raphson method is used to do the estimation.
+
+```{r newton2, echo = TRUE}
+# Improve it by halving the steps
+# Improved Newton–Raphson method
+newton2 <- function(init, pre=1e-50, maxrun=200) {
+  n <- 1
+  xt <- init
+  while (n<maxrun){
+    fx <- first_derv(xt, rdm_sample)
+    fx_d <- second_derv(xt, rdm_sample)
+    if (fx == 0) {break}
+    ht <- -fx/fx_d
+    xt1 <- xt + ht/2
+    if (abs(xt1-xt) < pre) {break}
+    xt <- xt1
+    n <- n+1
+  }
+  return(c(root = xt, iter = n))
+}
+
+init <- seq(-10, 30, 0.5)
+result2 <- as.data.frame(matrix(0, nrow = length(init), ncol = 3))
+for (i in 1:length(init) ) {
+  result2[i,1] <- paste("Initial = ", init[i])
+  result2[i,2:3] <- newton2(init[i])
+}
+colnames(result2) <- (c("Initial", "Root", "# of iterations"))
+library(pander)
+pander(result2)
+```
+
+```{r plot3, echo = TRUE}
+# plot
+result2 <- cbind(init, result2)
+ggplot(result2, aes(init, Root)) +
+  geom_line() + geom_point() + 
+  labs(title = expression(paste("Root vs. ", theta, " (Improved)")),
+       x = expression(paste("Initial value of ", theta)), y = "Root") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Compared to the standard Newton-Raphson method, the improved one has a more narrow estimation range. However, obviously on the plot, the estimation is still not stable. 
+
+# Fixed-Point Iterations
+```{r fixed_point, echo = TRUE}
+fix_pnt <- function(init, alpha, pre=1e-50, maxrun=200) {
+  n <- 1
+  x <- init
+  while (n<maxrun){
+    fx <- first_derv(x, rdm_sample)
+    if (fx == 0) {break}
+    Gx <- x + alpha*fx
+    if (abs(Gx-x) < pre) {break}
+    x <- Gx
+    n <- n+1
+  }
+  return(c(root = x, iter = n))
+}
+
+init <- seq(-10, 30, 0.5)
+alpha <- c(1, 0.64, 0.25)
+result3 <- as.data.frame(matrix(0, nrow = length(init), ncol = 7))
+for (i in 1:length(init) ) {
+  result3[i,1] <- paste("Init.=", init[i])
+  result3[i,2:3] <- fix_pnt(init[i], alpha[1])
+  result3[i,4:5] <- fix_pnt(init[i], alpha[2])
+  result3[i,6:7] <- fix_pnt(init[i], alpha[3])
+}
+colnames(result3) <- c("Initial", paste("Root (alpha=",alpha[1],")"),
+                       paste0("# of iterations (alpha=",alpha[1],")"),
+                       paste0("Root (alpha=",alpha[2],")"),
+                       paste0("# of iterations (alpha=",alpha[2],")"),
+                       paste0("Root (alpha=",alpha[3],")"),
+                       paste0("# of iterations (alpha=",alpha[3],")") )
+library(pander)
+pander(result3, style="rmarkdown", split.table=Inf, split.cells=Inf)
+```
+
+```{r plot4, echo = TRUE, fig.wideth=20}
+# plot
+result3_plot <- cbind(init, result3)
+colnames(result3_plot)[c(3,5,7)] <- c("y1","y2","y3")
+ggplot(result3_plot, aes(init)) +
+  geom_point(aes(y = y1, colour = "var0")) + 
+  geom_point(aes(y = y2, colour = "var1")) +
+  geom_point(aes(y = y3, colour = "var2")) +
+  labs(title = expression(paste("Root vs. ", theta)),
+       x = expression(paste("Initial value of ", theta)), y = "Root") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_colour_discrete(breaks=c("var0", "var1", "var2"),
+                      labels=c("alpha = 1", "alpha = 0.64", "alpha = 0.25"))
+```
+
+According to the plot, by using 3 different $\alpha$, we get 3 estimations with different performance. The smaller the $\alpha$ is, the faster and accurate the estimation is converging.
+
+# Fisher Scoring and Newton-Raphson method
+
+```{r fisher, echo = TRUE}
+# Fisher Scoring
+fisher <- function(init, pre=1e-10, maxrun=200) {
+  n <- 1
+  Ix <- 10/2
+  xt <- init
+  while (n<maxrun){
+    fx <- first_derv(xt, rdm_sample)
+    if (fx == 0) {break}
+    xt1 <- xt + fx/Ix
+    if (abs(xt1-xt) < pre) {break}
+    xt <- xt1
+    n <- n+1
+  }
+  return(c(root = xt, iter = n))
+}
+
+init <- seq(-10, 30, 0.5)
+result4 <- as.data.frame(matrix(0, nrow = length(init), ncol = 5))
+options(digits = 8)
+for (i in 1:length(init) ) {
+  result4[i,1] <- paste("Initial = ", init[i])
+  result4[i,2:3] <- fisher(init[i])
+  result4[i,4:5] <- newton(result4[i,2])
+}
+colnames(result4) <- c("Initial", "Root(Fisher Scoring)",
+                       "# of iterations(Fisher Scoring)", 
+                       "Root(Newton-Raphson)",
+                       "# of iterations (Newton-Raphson)")
+library(pander)
+pander(result4, style="rmarkdown",split.table=Inf, split.cells=Inf)
+```
+
+```{r plot5, echo = TRUE, fig.wideth=20}
+# plot
+# plot
+result4_plot <- cbind(init, result4)
+colnames(result4_plot)[c(3,5)] <- c("y1","y2")
+ggplot(result4_plot, aes(init)) +
+  geom_point(aes(y = y1, colour = "var0")) + 
+  geom_point(aes(y = y2, colour = "var1")) +
+  labs(title = expression(paste("Root vs. ", theta)),
+       x = expression(paste("Initial value of ", theta)), y = "Root") +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  scale_colour_discrete(breaks=c("var0", "var1"),
+                        labels=c("Fisher Scoring", "Fisher & Newton"))
+```
+
+According to the plot, it is obvious that the combined method of refining the Fisher Scoring estimate by using Newton-Raphson method is much better.
+
+# Comments
+
+By the comparision of these several methods, we can conclude when we have a initial value around the true value, the Newton-Raphson method would give a good estimation. Otherwise, this method shows to be very unstable. For fixed-point method, we need a relatively small parameter $\alpha$ to get a decent estimation. By combining Newton-Raphson method and Fisher scoring method, we finally get a stable, accurate algorithm to do the estimation. In addition, when paying attention to the number of iterations, we can find the last method is also the fastest one.
+
+
+
